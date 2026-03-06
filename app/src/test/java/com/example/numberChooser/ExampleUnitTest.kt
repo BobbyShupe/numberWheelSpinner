@@ -1,4 +1,4 @@
-package com.example.minimal
+package com.example.numberChooser
 
 import org.junit.Test
 
