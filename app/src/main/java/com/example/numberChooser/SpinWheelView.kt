@@ -16,19 +16,21 @@ class SpinWheelView @JvmOverloads constructor(
 
     private val TAG = "SpinWheel"
 
-    private val segments = 12
-    private val anglePerSegment = 360f / segments
+    private val SEGMENTS = 12
+    private val ANGLE_PER_SEGMENT = 360f / SEGMENTS
 
-    private var rotation = 0f
-    private var angularVelocity = 0f
+    private var rotation = 0f           // current wheel rotation in degrees
+    private var angularVelocity = 0f    // degrees per frame
 
     private var velocityTracker: VelocityTracker? = null
-    private var lastAngle = 0f
+    private var previousAngle = 0f
 
-    private val decay = 0.992f      // gradual slowdown
-    private val stopThreshold = 0.02f
+    // Physics - smoother, longer spin (less abrupt stop)
+    private val friction = 0.988f          // higher = slower decay, more spin time
+    private val minVelocityToStop = 0.12f  // lower threshold = stops more gently
+    private val velocityScale = 0.058f     // slightly softer initial fling
 
-    private var spinning = false
+    private var isSpinning = false
 
     private var resultListener: ((Int) -> Unit)? = null
 
@@ -36,112 +38,99 @@ class SpinWheelView @JvmOverloads constructor(
         resultListener = listener
     }
 
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val wheelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        textSize = 42f
+        textSize = 48f
         textAlign = Paint.Align.CENTER
+        isFakeBoldText = true
     }
 
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF555555.toInt()
-        strokeWidth = 4f
+        color = 0xFF444444.toInt()
+        strokeWidth = 5f
         style = Paint.Style.STROKE
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-
         val cx = width / 2f
         val cy = height / 2f
 
         val dx = event.x - cx
         val dy = event.y - cy
 
-        val angle = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
+        var currentAngle = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
+        if (currentAngle < 0) currentAngle += 360f
 
         when (event.actionMasked) {
-
             MotionEvent.ACTION_DOWN -> {
-
-                spinning = false
-
+                isSpinning = false
                 velocityTracker?.recycle()
                 velocityTracker = VelocityTracker.obtain()
-                velocityTracker!!.addMovement(event)
+                velocityTracker?.addMovement(event)
 
-                lastAngle = angle
-
+                previousAngle = currentAngle
                 parent.requestDisallowInterceptTouchEvent(true)
-
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
-
                 velocityTracker?.addMovement(event)
 
-                var delta = angle - lastAngle
-
-                if (delta > 180) delta -= 360f
-                if (delta < -180) delta += 360f
+                var delta = currentAngle - previousAngle
+                delta = (delta + 180f) % 360f - 180f
 
                 rotation += delta
-
                 angularVelocity = delta
 
-                lastAngle = angle
-
+                previousAngle = currentAngle
                 invalidate()
-
                 return true
             }
 
-            MotionEvent.ACTION_UP -> {
-
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 velocityTracker?.addMovement(event)
                 velocityTracker?.computeCurrentVelocity(1000)
 
                 val vx = velocityTracker?.xVelocity ?: 0f
                 val vy = velocityTracker?.yVelocity ?: 0f
 
-                val linearSpeed = sqrt(vx * vx + vy * vy)
+                val rx = event.x - cx
+                val ry = event.y - cy
 
-                angularVelocity = linearSpeed / 35f
+                val tangentialVelocity = (vx * -ry + vy * rx) / (rx * rx + ry * ry)
 
-                startSpin()
+                angularVelocity = tangentialVelocity * 1800f
 
                 velocityTracker?.recycle()
                 velocityTracker = null
 
+                if (abs(angularVelocity) > minVelocityToStop) {
+                    startFling()
+                } else {
+                    stopAndReport()
+                }
                 return true
             }
         }
-
-        return true
+        return super.onTouchEvent(event)
     }
 
-    private fun startSpin() {
-
-        spinning = true
-
+    private fun startFling() {
+        isSpinning = true
         post(object : Runnable {
-
             override fun run() {
+                if (!isSpinning) return
 
-                if (!spinning) return
+                rotation = (rotation + angularVelocity) % 360f
+                angularVelocity *= friction
 
-                rotation += angularVelocity
-
-                angularVelocity *= decay
-
-                if (abs(angularVelocity) < stopThreshold) {
-
-                    spinning = false
-                    reportResult()
-                    invalidate()
+                if (abs(angularVelocity) < minVelocityToStop) {
+                    isSpinning = false
+                    stopAndReport()
                     return
                 }
 
@@ -151,103 +140,85 @@ class SpinWheelView @JvmOverloads constructor(
         })
     }
 
+    private fun stopAndReport() {
+        rotation = ((rotation % 360f) + 360f) % 360f
+        invalidate()
+        reportResult()
+    }
+
     private fun reportResult() {
+        // Pointer is at TOP (0 degrees in mathematical convention)
+        val pointerPosition = 270f - ANGLE_PER_SEGMENT / 2f
 
         val normalized = ((rotation % 360f) + 360f) % 360f
+        // Angle from pointer to segment start (clockwise)
+        val angleFromPointer = (pointerPosition - normalized + 360f) % 360f
 
-        val pointerAngle = 180f
+        val segmentIndex = ((angleFromPointer / ANGLE_PER_SEGMENT).roundToInt()) % SEGMENTS
+        val winningNumber = (segmentIndex + 1)  // 1..12
 
-        val relative = (pointerAngle - normalized + 360f) % 360f
+        val midAngleOfSegment = (segmentIndex * ANGLE_PER_SEGMENT + ANGLE_PER_SEGMENT / 2 + rotation) % 360f
+        val distanceToCenter = (angleFromPointer % ANGLE_PER_SEGMENT - ANGLE_PER_SEGMENT / 2).absoluteValue
 
-        val index = floor(relative / anglePerSegment).toInt()
+        Log.d(TAG, "Result → number: $winningNumber | segment: $segmentIndex | rot: ${"%.1f".format(rotation)}° | pointer→mid: ${"%.1f".format(distanceToCenter)}° away")
 
-        val result = index + 1
-
-        Log.d(TAG, "Result = $result")
-
-        resultListener?.invoke(result)
+        resultListener?.invoke(winningNumber)
     }
 
     override fun onDraw(canvas: Canvas) {
-
         super.onDraw(canvas)
 
         val cx = width / 2f
         val cy = height / 2f
-
         val radius = min(width, height) / 2f * 0.88f
-
         val oval = RectF(cx - radius, cy - radius, cx + radius, cy + radius)
 
-        for (i in 0 until segments) {
-
-            paint.color =
-                if (i % 2 == 0) 0xFF1E1E1E.toInt()
-                else 0xFF2A2A2A.toInt()
-
-            canvas.drawArc(
-                oval,
-                i * anglePerSegment + rotation,
-                anglePerSegment,
-                true,
-                paint
-            )
+        // Segments
+        for (i in 0 until SEGMENTS) {
+            wheelPaint.color = if (i % 2 == 0) 0xFF1A1A1A.toInt() else 0xFF252525.toInt()
+            canvas.drawArc(oval, i * ANGLE_PER_SEGMENT + rotation, ANGLE_PER_SEGMENT, true, wheelPaint)
         }
 
-        for (i in 0 until segments) {
-
-            val a = (i * anglePerSegment + rotation) * PI / 180
-
-            val x1 = cx + cos(a) * radius
-            val y1 = cy + sin(a) * radius
-
-            val x2 = cx + cos(a) * radius * 0.12
-            val y2 = cy + sin(a) * radius * 0.12
-
-            canvas.drawLine(
-                x1.toFloat(),
-                y1.toFloat(),
-                x2.toFloat(),
-                y2.toFloat(),
-                borderPaint
-            )
+        // Spokes
+        borderPaint.strokeWidth = 4f
+        for (i in 0 until SEGMENTS) {
+            val angleRad = Math.toRadians((i * ANGLE_PER_SEGMENT + rotation).toDouble())
+            val x1 = cx + cos(angleRad) * radius
+            val y1 = cy + sin(angleRad) * radius
+            val x2 = cx + cos(angleRad) * radius * 0.08f
+            val y2 = cy + sin(angleRad) * radius * 0.08f
+            canvas.drawLine(x1.toFloat(), y1.toFloat(), x2.toFloat(), y2.toFloat(), borderPaint)
         }
 
-        for (i in 0 until segments) {
-
-            val mid = i * anglePerSegment + rotation + anglePerSegment / 2
-            val r = mid * PI / 180
-
-            val tx = cx + cos(r) * radius * 0.68
-            val ty = cy + sin(r) * radius * 0.68 + textPaint.textSize / 3
-
-            canvas.drawText(
-                (i + 1).toString(),
-                tx.toFloat(),
-                ty.toFloat(),
-                textPaint
-            )
+        // Numbers (drawn at segment midpoints)
+        for (i in 0 until SEGMENTS) {
+            val midAngle = i * ANGLE_PER_SEGMENT + rotation + ANGLE_PER_SEGMENT / 2
+            val rad = Math.toRadians(midAngle.toDouble())
+            val tx = cx + cos(rad) * radius * 0.70
+            val ty = cy + sin(rad) * radius * 0.70 + textPaint.textSize * 0.35f
+            canvas.drawText((i + 1).toString(), tx.toFloat(), ty.toFloat(), textPaint)
         }
 
-        paint.color = 0xFF2C2C2C.toInt()
-        canvas.drawCircle(cx, cy, radius * 0.14f, paint)
+        // Center hub
+        wheelPaint.color = 0xFF222222.toInt()
+        canvas.drawCircle(cx, cy, radius * 0.16f, wheelPaint)
 
+        // Pointer TRIANGLE AT TOP, pointing DOWN (tip towards center)
         val pointerPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        val path = Path().apply {
+            moveTo(cx, cy - radius + 80f)          // tip (pointing down toward center)
+            lineTo(cx - 48f, cy - radius + 10f)    // left base (higher up)
+            lineTo(cx + 48f, cy - radius + 10f)    // right base
+            close()
+        }
+
         pointerPaint.color = Color.WHITE
-
-        val path = Path()
-
-        path.moveTo(cx, cy + radius - 50f)
-        path.lineTo(cx - 44f, cy + radius + 30f)
-        path.lineTo(cx + 44f, cy + radius + 30f)
-        path.close()
-
         canvas.drawPath(path, pointerPaint)
 
         pointerPaint.color = Color.BLACK
         pointerPaint.style = Paint.Style.STROKE
         pointerPaint.strokeWidth = 7f
-
         canvas.drawPath(path, pointerPaint)
     }
 }
