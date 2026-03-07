@@ -208,7 +208,7 @@ class SpinWheelView @JvmOverloads constructor(
         animator.addListener(object : AnimatorListenerAdapter() {
             override fun onAnimationEnd(animation: Animator) {
                 isSpinning = false
-                stopAndReport()
+                //stopAndReport()
             }
         })
 
