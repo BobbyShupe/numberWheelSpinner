@@ -24,7 +24,7 @@ class SpinWheelView @JvmOverloads constructor(
     private val ANGLE_PER_SEGMENT = 360f / SEGMENTS
 
     private var rotation = 0f
-    private var angularVelocity = 0f            // degrees per second
+    private var angularVelocity = 0f
 
     private var velocityTracker: VelocityTracker? = null
     private var previousAngle = 0f
@@ -32,19 +32,36 @@ class SpinWheelView @JvmOverloads constructor(
     private var totalAngleDelta = 0f
 
     // Tuning
-    private val friction = 0.985f            // was 0.965  (slower decay)
+    private val friction = 0.985f
     private val minVelocityToStartFling = 30f
     private val velocityScale = 1.8f
-    private val stopVelocity = 2.5f          // new: very slow final stop
+    private val stopVelocity = 2.5f
     private var isSpinning = false
 
     private var resultListener: ((Int) -> Unit)? = null
+    private var currentNumberListener: ((Int) -> Unit)? = null   // for live preview
+    private val history = mutableListOf<Int>()
 
     fun setOnResultListener(listener: (Int) -> Unit) {
         resultListener = listener
     }
 
+    fun setOnCurrentNumberListener(listener: (Int) -> Unit) {
+        currentNumberListener = listener
+    }
+
+    fun getHistory(): String = history.joinToString(", ")
+
+    fun addToHistory(number: Int) {
+        history.add(number)
+    }
+
     private val wheelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = 0xFF4444FF.toInt() // blue-ish highlight
+        alpha = 180
+    }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textSize = 48f
@@ -55,6 +72,15 @@ class SpinWheelView @JvmOverloads constructor(
         color = 0xFF444444.toInt()
         strokeWidth = 5f
         style = Paint.Style.STROKE
+    }
+
+    // Returns the number currently under the pointer (live)
+    private fun getCurrentNumberUnderPointer(): Int {
+        val pointerPosition = 270f   // top = 270° in android canvas
+        val normalized = (rotation + 360f) % 360f
+        val angleFromPointer = (pointerPosition - normalized + 360f) % 360f
+        val segmentIndex = floor(angleFromPointer / ANGLE_PER_SEGMENT).toInt() % SEGMENTS
+        return (segmentIndex + 1)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -86,14 +112,10 @@ class SpinWheelView @JvmOverloads constructor(
 
                 val prevX = cos(prevRad)
                 val prevY = sin(prevRad)
-
                 val currX = cos(currRad)
                 val currY = sin(currRad)
 
-// cross product gives correct rotational direction
                 val cross = (prevX * currY - prevY * currX).toFloat()
-
-// dot product gives angle magnitude
                 val dot = (prevX * currX + prevY * currY).toFloat()
                 val delta = Math.toDegrees(atan2(cross.toDouble(), dot.toDouble())).toFloat()
 
@@ -101,6 +123,10 @@ class SpinWheelView @JvmOverloads constructor(
                 totalAngleDelta += delta
 
                 previousAngle = currentAngle
+
+                // Live preview during drag
+                currentNumberListener?.invoke(getCurrentNumberUnderPointer())
+
                 invalidate()
                 return true
             }
@@ -120,10 +146,6 @@ class SpinWheelView @JvmOverloads constructor(
                 velocityTracker?.recycle()
                 velocityTracker = null
 
-                Log.d(TAG, "RELEASE | totalΔ=%.1f° | dur=%dms | vel=%.1f °/s | fling? ${abs(angularVelocity) > minVelocityToStartFling}".format(
-                    totalAngleDelta, durationMs, angularVelocity
-                ))
-
                 if (abs(angularVelocity) > minVelocityToStartFling) {
                     startFling()
                 } else {
@@ -139,12 +161,10 @@ class SpinWheelView @JvmOverloads constructor(
         if (isSpinning) return
         isSpinning = true
 
-        Log.d(TAG, "FLING START | initial vel = ${"%.1f".format(angularVelocity)} °/s")
-
-        val animator = ValueAnimator.ofFloat(0f, 1f)   // just a ticker
-        animator.duration = 12000L                      // max duration
+        val animator = ValueAnimator.ofFloat(0f, 1f)
+        animator.duration = 12000L
         animator.interpolator = LinearInterpolator()
-        animator.repeatCount = ValueAnimator.INFINITE   // we cancel manually
+        animator.repeatCount = ValueAnimator.INFINITE
 
         var lastTime = System.nanoTime()
 
@@ -158,27 +178,23 @@ class SpinWheelView @JvmOverloads constructor(
             val deltaTimeSec = (now - lastTime) / 1_000_000_000.0
             lastTime = now
 
-            // Time-corrected rotation update
             val deltaAngle = angularVelocity * deltaTimeSec.toFloat()
             rotation += deltaAngle
             rotation = (rotation + 360f) % 360f
 
-// Progressive friction (casino style)
-// strong slowdown when fast, gentle when slow
             val speed = abs(angularVelocity)
-
             val dynamicFriction = when {
                 speed > 720f -> 0.993f
                 speed > 360f -> 0.994f
                 speed > 180f -> 0.995f
                 speed > 90f  -> 0.996f
-                else         -> 0.997f   // very slow coast at the end
+                else         -> 0.997f
             }
 
             angularVelocity *= dynamicFriction.toDouble().pow(deltaTimeSec * 60.0).toFloat()
-            Log.d(TAG, "FLING FRAME | vel=%.1f °/s | deltaAngle=%.2f° | rot=%.1f°".format(
-                angularVelocity, deltaAngle, rotation
-            ))
+
+            // Live update during spin
+            currentNumberListener?.invoke(getCurrentNumberUnderPointer())
 
             if (abs(angularVelocity) < stopVelocity) {
                 isSpinning = false
@@ -193,7 +209,6 @@ class SpinWheelView @JvmOverloads constructor(
             override fun onAnimationEnd(animation: Animator) {
                 isSpinning = false
                 stopAndReport()
-                Log.d(TAG, "FLING END | final rot = ${"%.1f".format(rotation)}°")
             }
         })
 
@@ -202,18 +217,9 @@ class SpinWheelView @JvmOverloads constructor(
 
     private fun stopAndReport() {
         rotation = (rotation + 360f) % 360f
+        val winningNumber = getCurrentNumberUnderPointer()
+        addToHistory(winningNumber)
         invalidate()
-        reportResult()
-    }
-
-    private fun reportResult() {
-        val pointerPosition = 270f
-        val normalized = (rotation + 360f) % 360f
-        val angleFromPointer = (pointerPosition - normalized + 360f) % 360f
-        val segmentIndex = floor(angleFromPointer / ANGLE_PER_SEGMENT).toInt() % SEGMENTS
-        val winningNumber = (segmentIndex + 1)
-
-        Log.d(TAG, "RESULT → number: $winningNumber   segment: $segmentIndex   rotation: ${"%.1f".format(rotation)}°")
         resultListener?.invoke(winningNumber)
     }
 
@@ -225,21 +231,38 @@ class SpinWheelView @JvmOverloads constructor(
         val radius = min(width, height) / 2f * 0.88f
         val oval = RectF(cx - radius, cy - radius, cx + radius, cy + radius)
 
+        val pointerAngle = 270f
+        val normalizedRotation = (rotation + 360f) % 360f
+        val highlightedSegment = floor(((pointerAngle - normalizedRotation + 360f) % 360f) / ANGLE_PER_SEGMENT).toInt() % SEGMENTS
+
+        // Draw segments + highlight
         for (i in 0 until SEGMENTS) {
-            wheelPaint.color = if (i % 2 == 0) 0xFF1A1A1A.toInt() else 0xFF252525.toInt()
+            val isHighlighted = (i == highlightedSegment)
+            wheelPaint.color = when {
+                isHighlighted -> 0xFF5555FF.toInt() // brighter blue
+                i % 2 == 0    -> 0xFF1A1A1A.toInt()
+                else          -> 0xFF252525.toInt()
+            }
             canvas.drawArc(oval, i * ANGLE_PER_SEGMENT + rotation, ANGLE_PER_SEGMENT, true, wheelPaint)
+
+            // subtle overlay highlight
+            if (isHighlighted) {
+                canvas.drawArc(oval, i * ANGLE_PER_SEGMENT + rotation, ANGLE_PER_SEGMENT, true, highlightPaint)
+            }
         }
 
+        // Dividers
         borderPaint.strokeWidth = 4f
         for (i in 0 until SEGMENTS) {
             val angleRad = Math.toRadians((i * ANGLE_PER_SEGMENT + rotation).toDouble())
             val x1 = cx + cos(angleRad) * radius
             val y1 = cy + sin(angleRad) * radius
-            val x2 = cx + cos(angleRad) * radius * 0.08f
-            val y2 = cy + sin(angleRad) * radius * 0.08f
+            val x2 = cx + cos(angleRad) * radius * 0.92f   // shorter lines
+            val y2 = cy + sin(angleRad) * radius * 0.92f
             canvas.drawLine(x1.toFloat(), y1.toFloat(), x2.toFloat(), y2.toFloat(), borderPaint)
         }
 
+        // Numbers
         for (i in 0 until SEGMENTS) {
             val midAngle = i * ANGLE_PER_SEGMENT + rotation + ANGLE_PER_SEGMENT / 2
             val rad = Math.toRadians(midAngle.toDouble())
@@ -248,14 +271,16 @@ class SpinWheelView @JvmOverloads constructor(
             canvas.drawText((i + 1).toString(), tx.toFloat(), ty.toFloat(), textPaint)
         }
 
+        // Center circle
         wheelPaint.color = 0xFF222222.toInt()
         canvas.drawCircle(cx, cy, radius * 0.16f, wheelPaint)
 
+        // Pointer TRIANGLE - now ABOVE the wheel
         val pointerPaint = Paint(Paint.ANTI_ALIAS_FLAG)
         val path = Path().apply {
-            moveTo(cx, cy - radius + 80f)
-            lineTo(cx - 48f, cy - radius + 10f)
-            lineTo(cx + 48f, cy - radius + 10f)
+            moveTo(cx, cy - radius + 70f - 40f)           // ← original starting point (tip slightly inside)
+            lineTo(cx - 28f, cy - radius - 40f)     // original base points
+            lineTo(cx + 28f, cy - radius - 40f)
             close()
         }
 
