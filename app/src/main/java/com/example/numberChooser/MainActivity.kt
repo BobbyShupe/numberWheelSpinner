@@ -1,5 +1,9 @@
 package com.example.numberChooser
 
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+
 import android.content.Context
 import android.os.Bundle
 import android.text.InputType
@@ -23,6 +27,11 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
 
         super.onCreate(savedInstanceState)
+
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.statusBars())
 
         val prefs =
             getSharedPreferences("wheelPrefs", Context.MODE_PRIVATE)
