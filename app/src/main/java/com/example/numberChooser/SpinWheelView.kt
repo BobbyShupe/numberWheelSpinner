@@ -109,18 +109,18 @@ class SpinWheelView @JvmOverloads constructor(
 
     private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = 0xFF4444FF.toInt()
+        color = 0xFFFFFF00.toInt()
         alpha = 180
     }
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = Color.BLACK
         textAlign = Paint.Align.CENTER
         isFakeBoldText = true
     }
 
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF444444.toInt()
+        color = 0xFF000000.toInt()
         strokeWidth = 5f
         style = Paint.Style.STROKE
     }
@@ -346,9 +346,9 @@ class SpinWheelView @JvmOverloads constructor(
             val isHighlighted = i == highlightedSegment
 
             wheelPaint.color = when {
-                isHighlighted -> 0xFF5555FF.toInt()
-                i % 2 == 0 -> 0xFF1A1A1A.toInt()
-                else -> 0xFF252525.toInt()
+                isHighlighted -> 0xFFFFFF55.toInt()
+                i % 2 == 0 -> 0xFFFF0000.toInt()
+                else -> 0xFFFFFFFF.toInt()
             }
 
             canvas.drawArc(
@@ -417,9 +417,9 @@ class SpinWheelView @JvmOverloads constructor(
             )
         }
 
-        wheelPaint.color = 0xFF222222.toInt()
+        wheelPaint.color = 0xFFFF0000.toInt()
 
-        canvas.drawCircle(cx, cy, radius * 0.16f, wheelPaint)
+        canvas.drawCircle(cx, cy, radius * 0.033f, wheelPaint)
 
         val pointerPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
@@ -437,7 +437,7 @@ class SpinWheelView @JvmOverloads constructor(
         pointerPaint.color = Color.WHITE
         canvas.drawPath(path, pointerPaint)
 
-        pointerPaint.color = Color.BLACK
+        pointerPaint.color = Color.BLUE
         pointerPaint.style = Paint.Style.STROKE
         pointerPaint.strokeWidth = 7f
 
